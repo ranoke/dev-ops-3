@@ -1,0 +1,101 @@
+- hosts: wordpress
+  become: yes
+
+  vars:
+    wp_mysql_db: wordpress 
+    wp_mysql_user: wordpress 
+    wp_mysql_password: supersecretpassword
+
+
+  tasks:
+    - name: Update apt cache 
+      apt: update_cache=yes cache_valid_time=3600    
+      sudo: yes
+      tags: 
+        - install
+
+    - name: Install LAMP
+      apt: name={{ item }} state=present
+      sudo: yes
+      with_items:
+        - apache2
+        - mysql-server 
+        - php-mysql
+        - php
+        - libapache2-mod-php 
+        - php-mcrypt
+        - python-mysqldb
+
+      tags:
+        - install
+
+    - name: Install php extensions
+      apt: name={{ item }} state=present
+      sudo: yes
+      with_items:
+        - php-gd 
+        - php-ssh2
+      tags:
+        - install
+    - name: Allow hosts to connect
+      shell: sed -i "s/.*bind-address.*/bind-address = 0.0.0.0/" /etc/mysql/mariadb.conf.d/50-server.cnf
+    - name: Start mysql
+      service:
+        name: mysqld
+        state: restarted
+    - name: Create mysql database
+      mysql_db: 
+        name={{ wp_mysql_db }} 
+        state=present
+      tags:
+        - setup
+
+    - name: Create mysql user 
+      mysql_user: 
+        name={{ wp_mysql_user }} 
+        password={{ wp_mysql_password }} 
+        priv=*.*:ALL
+      tags:
+        - setup
+
+    - name: Download Wordpress
+      get_url: url=https://github.com/mplesha/NoviNano/releases/download/v1.0/20180706_novinano_mr_9d7561b2584268389437180706072703_archive.zip dest=~/wordpress.zip
+      tags: 
+        - setup
+
+    - name: Extract Wordpress
+      unarchive: src=~/wordpress.zip dest=/var/www/ copy=no
+      tags: 
+        - setup
+
+    - name: Update default Apache site
+      sudo: yes
+      lineinfile: 
+        dest=/etc/apache2/sites-enabled/000-default.conf 
+        regexp="(.)+DocumentRoot /var/www/html"
+        line="DocumentRoot /var/www/wordpress"
+      notify:
+        - restart apache
+      tags:
+        - configure
+
+    - name: Copy sample config file
+      command: mv /var/www/wordpress/wp-config-sample.php /var/www/wordpress/wp-config.php creates=/var/www/wordpress/wp-config.php
+      tags:
+        - configure
+
+    - name: Update Wordpress config file
+      lineinfile:
+        dest=/var/www/wordpress/wp-config.php
+        regexp="{{ item.regexp }}"
+        line="{{ item.line }}"
+      with_items:
+        - {'regexp': "define.*DB_NAME.*", 'line': "define('DB_NAME', '{{wp_mysql_db}}');"}        
+        - {'regexp': "define.*DB_USER.*", 'line': "define('DB_USER', '{{wp_mysql_user}}');"}        
+        - {'regexp': "define.*DB_PASSWORD.*", 'line': "define('DB_PASSWORD', '{{wp_mysql_password}}');"}        
+      tags:
+        - configure
+
+  handlers:
+    - name: restart apache
+      service: name=apache2 state=restarted
